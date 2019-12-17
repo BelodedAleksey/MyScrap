@@ -11,6 +11,7 @@ import (
 	"github.com/gocolly/colly"
 )
 
+//Player for checkPlayer
 type Player struct {
 	Name          string
 	ID            string
@@ -20,31 +21,70 @@ type Player struct {
 	MaxRankPoint  string
 	Candy         string
 	Level         string
+	LevelPoint    string
 	MatchesPlayed string
 	AveragePlace  string
 	Top1          string
 	Top3          string
 	Rounds        string
+	Games         []Game
+}
+
+//Game struct
+type Game struct {
+	Place  string
+	Data   string
+	Lobby  string
+	MMR    string
+	Time   string
+	Rounds string
+	VPN    string
+	Gold   string
+	Health string
+	Cost   string
+}
+
+//PlayerT for Top500
+type PlayerT struct {
+	Name    string
+	ID      string
+	Rank    string
+	MMR     string
+	IconURL string
 }
 
 //GetTop500 func
-func GetTop500() {
+func GetTop500() ([]PlayerT, error) {
+	var players []PlayerT
+	player := PlayerT{}
 	urlMain := "https://auto-chess.ru/mobile-top1000/"
 	cMain := colly.NewCollector()
+
 	cMain.OnHTML(`tr.main`, func(e *colly.HTMLElement) {
-		fmt.Println("Игрок: ", e.ChildText(`span`))
-		fmt.Println("Ранг: ", e.ChildText(`td:not([class])`))
-		fmt.Println("ММР: ", e.ChildText(`.rank-1`))
+		player.Name = e.ChildText(`span`)
+		player.Rank = e.ChildText(`td:not([class])`)
+		player.MMR = e.ChildText(`.rank-1`)
 		s := strings.Split(e.ChildAttr(`a`, `href`), `/`)
-		fmt.Println("ID: ", s[len(s)-2])
-		fmt.Println("Иконка: ", `auto-chess.ru`+e.ChildAttr(`img`, `src`))
+		player.ID = s[len(s)-2]
+		player.IconURL = `auto-chess.ru` + e.ChildAttr(`img`, `src`)
+		players = append(players, player)
 	})
-	cMain.Visit(urlMain)
+
+	cMain.OnError(func(r *colly.Response, err error) {
+		fmt.Printf("Error during http request: %s", err)
+	})
+
+	err := cMain.Visit(urlMain)
+	if err != nil {
+		fmt.Printf("Error visiting %s: %s", urlMain, err)
+		return nil, err
+	}
 	cMain.Wait()
+	return players, nil
 }
 
 //GetPlayersByName func
-func GetPlayersByName(name string) {
+func GetPlayersByName(name string) ([]PlayerT, error) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", false), //Визуальное отображение
 		chromedp.Flag("disable-gpu", false),
@@ -67,9 +107,10 @@ func GetPlayersByName(name string) {
 	defer cancel()
 
 	var (
-		result string
-		names  []string
-		ids    []map[string]string
+		result  string
+		ids     []map[string]string
+		players []PlayerT
+		names   []string
 	)
 	urlCheck := "https://auto-chess.ru/check-player/"
 	//Поиск по имени
@@ -89,33 +130,43 @@ func GetPlayersByName(name string) {
 		}),
 		chromedp.WaitVisible(`.search-results`),
 		chromedp.Text(`.search-results`, &result, chromedp.NodeVisible),
+		//chromedp.OuterHTML(`*[class^="heroes-list"]`, &outerhtml),
 		chromedp.Evaluate(jsGetText(`.hero-flex`), &names),
-		chromedp.AttributesAll(`a[href^="/check-player/"]`, &ids, chromedp.ByQueryAll),
+		chromedp.AttributesAll(`a[href^="/check-player/"][target="blank"]`, &ids, chromedp.ByQueryAll),
 	)
 
 	if err != nil {
 		fmt.Println("Ошибка ChromeDP: ", err)
+		return nil, err
 	}
+	/*reg, err := regexp.Compile(`<br>(.*?)<br>`)
+	if err != nil {
+		fmt.Println("Error regexp: ", err)
+	}
+	html := reg.FindAllString(outerhtml, -1)*/
 	fmt.Println("RESULT: ", result)
 	for i, n := range names {
-		fmt.Println("Name: ", n)
+		spl := strings.Split(n, " ")
+		name := spl[0][0 : len(spl)-2]
+		rank := spl[0][len(spl)-1:] + " " + spl[1]
 		s := strings.Split(ids[i]["href"], `/`)
-		fmt.Println("ID: ", s[len(s)-2])
+		players = append(players, PlayerT{ID: s[len(s)-2], Name: name, Rank: rank})
 	}
-
+	return players, nil
 }
 
 //GetPlayerByID func
-func GetPlayerByID(id string) {
-	//player := Player{}
+func GetPlayerByID(id string) (Player, error) {
+	player := Player{}
+	var games []Game
 	urlPlayer := "https://auto-chess.ru/check-player/" + id
 	cPlayer := colly.NewCollector()
 	cPlayer.OnHTML(`.article__content *`, func(e *colly.HTMLElement) {
 		if e.Attr(`id`) == `info-block` {
-			fmt.Println("Игрок: ", e.ChildText(`h3:first-of-type`))
-			fmt.Println("Ранг: ", e.ChildText(`h3:nth-of-type(2)`))
-			fmt.Println("ID: ", e.ChildText(`div:first-of-type`))
-			fmt.Println("Конфеты: ", e.ChildText(`div:nth-of-type(2)`))
+			player.Name = e.ChildText(`h3:first-of-type`)
+			player.Rank = e.ChildText(`h3:nth-of-type(2)`)
+			player.ID = e.ChildText(`div:first-of-type`)
+			player.Candy = e.ChildText(`div:nth-of-type(2)`)
 		}
 		if e.Attr(`id`) == `rank-level` {
 			text, err := e.DOM.Html()
@@ -124,52 +175,87 @@ func GetPlayerByID(id string) {
 			}
 			text = strings.TrimSuffix(text, "</span>")
 			txt := strings.Split(text, "<br/><span>")
-			fmt.Println("Уровень: ", txt[0])
-			fmt.Println("Очков: ", txt[1])
+			player.Level = txt[0]
+			player.LevelPoint = txt[1]
 		}
 		if strings.Contains(e.Attr(`class`), `rank-big`) {
 			switch e.ChildText(`h3`) {
 			case "Ранг игрока":
 				s := "Ранг игрока"
-				fmt.Println(s+": ", strings.Trim(e.Text, s))
+				player.RankPoint = strings.Trim(e.Text, s)
 			case "Макс. ранг":
 				s := "Макс. ранг"
-				fmt.Println(s+": ", strings.Trim(e.Text, s))
+				player.MaxRankPoint = strings.Trim(e.Text, s)
 			case "Матчей сыграно":
 				s := "Матчей сыграно"
-				fmt.Println(s+": ", strings.Trim(e.Text, s))
+				player.MatchesPlayed = strings.Trim(e.Text, s)
 			case "Среднее место":
 				s := "Среднее место"
-				fmt.Println(s+": ", strings.Trim(e.Text, s))
+				player.AveragePlace = strings.Trim(e.Text, s)
 			case "Топ-1":
 				s := "Топ-1"
-				fmt.Println(s+": ", strings.Trim(e.Text, s))
+				player.Top1 = strings.Trim(e.Text, s)
 			case "Топ-3":
 				s := "Топ-3"
-				fmt.Println(s+": ", strings.Trim(e.Text, s))
+				player.Top3 = strings.Trim(e.Text, s)
 			case "Раундов в матчах":
 				s := "Раундов в матчах"
-				fmt.Println(s+": ", strings.Trim(e.Text, s))
+				player.Rounds = strings.Trim(e.Text, s)
 			default:
 			}
 		}
 
 		//История игр
+		game := Game{}
 		if strings.Contains(e.Attr(`id`), `match`) {
-			fmt.Println("Место: ", e.ChildText(`.match-place`))
+			game.Place = e.ChildText(`.match-place`)
 			mInfo := e.DOM.Find(`.match-info`).First()
 			for i := 0; i < 9; i++ {
 				//Дата**Лобби**MMR**Время**Раунды**В/П/Н**Золото**Здоровье**Цена сборки**
 				s := mInfo.Children().Text()
-				fmt.Println(s+": ", strings.Trim(mInfo.Text(), s))
-				mInfo = mInfo.Next()
+				switch s {
+				case "Дата":
+					game.Data = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				case "Лобби":
+					game.Lobby = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				case "MMR":
+					game.MMR = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				case "Время":
+					game.Rounds = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				case "В/П/Н":
+					game.VPN = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				case "Золото":
+					game.Gold = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				case "Здоровье":
+					game.Health = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				case "Цена сборки":
+					game.Cost = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				}
 			}
 		}
-
+		games = append(games, game)
 	})
 
-	cPlayer.Visit(urlPlayer)
+	cPlayer.OnError(func(r *colly.Response, err error) {
+		fmt.Printf("Error during http request: %s", err)
+	})
+
+	err := cPlayer.Visit(urlPlayer)
+	if err != nil {
+		fmt.Printf("Error visiting %s: %s", urlPlayer, err)
+		return Player{}, err
+	}
 	cPlayer.Wait()
+	player.Games = games
+	return player, nil
 }
 
 //Get All Text of Elements
@@ -181,7 +267,7 @@ func jsGetText(sel string) (js string) {
 				for(var i = 0; i < elements.length; i++) {
 					var current = elements[i];
 					if(current.textContent.replace(/ |\n/g,'') !== '') {
-					// Check the element is not empty
+					// Check the element is not empty	
 						text.push(current.textContent + ',');
 					}
 				}
