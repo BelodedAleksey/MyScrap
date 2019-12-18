@@ -23,6 +23,6 @@ func main() {
 		fmt.Printf("Error GetPlayersByName: %s", err)
 	}
 	for _, p := range players {
-		fmt.Println("Игрок: ", p.Name+"\t"+p.ID)
+		fmt.Println("Игрок: ", p.Name+"\t"+p.ID+"\t"+p.Rank+"\t"+p.IconURL)
 	}
 }

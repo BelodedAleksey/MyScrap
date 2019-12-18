@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
@@ -107,10 +108,9 @@ func GetPlayersByName(name string) ([]PlayerT, error) {
 	defer cancel()
 
 	var (
-		result  string
-		ids     []map[string]string
-		players []PlayerT
-		names   []string
+		result    string
+		players   []PlayerT
+		outerhtml string
 	)
 	urlCheck := "https://auto-chess.ru/check-player/"
 	//Поиск по имени
@@ -130,27 +130,44 @@ func GetPlayersByName(name string) ([]PlayerT, error) {
 		}),
 		chromedp.WaitVisible(`.search-results`),
 		chromedp.Text(`.search-results`, &result, chromedp.NodeVisible),
-		//chromedp.OuterHTML(`*[class^="heroes-list"]`, &outerhtml),
-		chromedp.Evaluate(jsGetText(`.hero-flex`), &names),
-		chromedp.AttributesAll(`a[href^="/check-player/"][target="blank"]`, &ids, chromedp.ByQueryAll),
+		chromedp.OuterHTML(`*[class^="heroes-list"]`, &outerhtml),
+		//chromedp.Evaluate(jsGetText(`.hero-flex`), &names),
+		//chromedp.AttributesAll(`a[href^="/check-player/"][target="blank"]`, &ids, chromedp.ByQueryAll),
 	)
 
 	if err != nil {
 		fmt.Println("Ошибка ChromeDP: ", err)
 		return nil, err
 	}
-	/*reg, err := regexp.Compile(`<br>(.*?)<br>`)
+	//Names
+	reg, err := regexp.Compile(`<br>(.*?)<br>`)
 	if err != nil {
 		fmt.Println("Error regexp: ", err)
 	}
-	html := reg.FindAllString(outerhtml, -1)*/
+	names := reg.FindAllStringSubmatch(outerhtml, -1)
+	//Ids
+	reg, err = regexp.Compile(`check-player/(.*?)/"`)
+	if err != nil {
+		fmt.Println("Error regexp: ", err)
+	}
+	ids := reg.FindAllStringSubmatch(outerhtml, -1)
+	//Ranks
+	reg, err = regexp.Compile(`"common">(.*?)</span>`)
+	if err != nil {
+		fmt.Println("Error regexp: ", err)
+	}
+	ranks := reg.FindAllStringSubmatch(outerhtml, -1)
+	//Icons
+	reg, err = regexp.Compile(`image:url\((.*?)\)">`)
+	if err != nil {
+		fmt.Println("Error regexp: ", err)
+	}
+	iconUrls := reg.FindAllStringSubmatch(outerhtml, -1)
 	fmt.Println("RESULT: ", result)
 	for i, n := range names {
-		spl := strings.Split(n, " ")
-		name := spl[0][0 : len(spl)-2]
-		rank := spl[0][len(spl)-1:] + " " + spl[1]
-		s := strings.Split(ids[i]["href"], `/`)
-		players = append(players, PlayerT{ID: s[len(s)-2], Name: name, Rank: rank})
+		players = append(players,
+			PlayerT{ID: ids[i][1], Name: n[1], Rank: ranks[i][1],
+				IconURL: "auto-chess.ru" + iconUrls[i][1]})
 	}
 	return players, nil
 }
