@@ -182,7 +182,7 @@ func GetPlayerByID(id string) (Player, error) {
 		if e.Attr(`id`) == `info-block` {
 			player.Name = e.ChildText(`h3:first-of-type`)
 			player.Rank = e.ChildText(`h3:nth-of-type(2)`)
-			player.ID = e.ChildText(`div:first-of-type`)
+			player.ID = strings.TrimPrefix(e.ChildText(`div:first-of-type`), "ID: ")
 			player.Candy = e.ChildText(`div:nth-of-type(2)`)
 		}
 		if e.Attr(`id`) == `rank-level` {
@@ -191,6 +191,7 @@ func GetPlayerByID(id string) (Player, error) {
 				fmt.Println("Error HTML: ", err)
 			}
 			text = strings.TrimSuffix(text, "</span>")
+			text = strings.TrimPrefix(text, "Уровень ")
 			txt := strings.Split(text, "<br/><span>")
 			player.Level = txt[0]
 			player.LevelPoint = txt[1]
@@ -198,11 +199,9 @@ func GetPlayerByID(id string) (Player, error) {
 		if strings.Contains(e.Attr(`class`), `rank-big`) {
 			switch e.ChildText(`h3`) {
 			case "Ранг игрока":
-				s := "Ранг игрока"
-				player.RankPoint = strings.Trim(e.Text, s)
+				player.RankPoint = e.ChildText(`span`)
 			case "Макс. ранг":
-				s := "Макс. ранг"
-				player.MaxRankPoint = strings.Trim(e.Text, s)
+				player.MaxRankPoint = e.ChildText(`span`)
 			case "Матчей сыграно":
 				s := "Матчей сыграно"
 				player.MatchesPlayed = strings.Trim(e.Text, s)
@@ -223,13 +222,13 @@ func GetPlayerByID(id string) (Player, error) {
 		}
 
 		//История игр
-		game := Game{}
+
 		if strings.Contains(e.Attr(`id`), `match`) {
-			game.Place = e.ChildText(`.match-place`)
+			game := Game{}
+			game.Place = e.ChildText(`div[class^="match-place"]`)
 			mInfo := e.DOM.Find(`.match-info`).First()
 			for i := 0; i < 9; i++ {
-				//Дата**Лобби**MMR**Время**Раунды**В/П/Н**Золото**Здоровье**Цена сборки**
-				s := mInfo.Children().Text()
+				s := mInfo.Find(`span`).Text()
 				switch s {
 				case "Дата":
 					game.Data = strings.Trim(mInfo.Text(), s)
@@ -238,9 +237,12 @@ func GetPlayerByID(id string) (Player, error) {
 					game.Lobby = strings.Trim(mInfo.Text(), s)
 					mInfo = mInfo.Next()
 				case "MMR":
-					game.MMR = strings.Trim(mInfo.Text(), s)
+					game.MMR = mInfo.Find(`div`).Text()
 					mInfo = mInfo.Next()
 				case "Время":
+					game.Time = strings.Trim(mInfo.Text(), s)
+					mInfo = mInfo.Next()
+				case "Раунды":
 					game.Rounds = strings.Trim(mInfo.Text(), s)
 					mInfo = mInfo.Next()
 				case "В/П/Н":
@@ -257,8 +259,8 @@ func GetPlayerByID(id string) (Player, error) {
 					mInfo = mInfo.Next()
 				}
 			}
+			games = append(games, game)
 		}
-		games = append(games, game)
 	})
 
 	cPlayer.OnError(func(r *colly.Response, err error) {

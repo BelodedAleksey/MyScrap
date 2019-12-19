@@ -2,32 +2,50 @@ package hibiny
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/gocolly/colly"
 )
 
-var url = "https://www.hibiny.com/"
+//New struct
+type New struct {
+	Header   string
+	Data     string
+	Content  string
+	ImageURL string
+}
 
-//Get func
-func Get() {
-
+//GetNews func
+func GetNews() []New {
+	var news []New
+	n := New{}
+	var url = "https://www.hibiny.com/news"
 	c := colly.NewCollector()
-	c.OnHTML("a[href]", func(e *colly.HTMLElement) {
-		if e.Text == "Прогноз погоды" { //текст ссылки
-			link := e.DOM.Parent().Parent().Next()     //поднимаемся на 2 уровня выше и берем следущую строку на этом уровне
-			txt := link.Children().Find("span").Text() //ищем span, его текст это t°C
-			fmt.Println("TEXT: ", txt)
-		}
 
-		if e.Text == "Кино в Апатитах" {
-			c.Visit(url + e.Attr("href")) //склеиваем ссылки
+	c.OnHTML(`*`, func(e *colly.HTMLElement) {
+		if strings.Contains(e.Attr(`href`), `/news/archive`) && e.Text != "" {
+			n.Header = e.Text
+			p := e.DOM.Parent()
+			for i := 0; i < 7; i++ {
+				p = p.Parent()
+			}
+			n.Data = p.Find(`td.p10`).Text()
+			n.Content = p.Find(`td.p`).Text()
+			news = append(news, n)
 		}
-		//Поднимаемся пока не найдем td с потомком h1, если его текст Афиша то берем текст ссылок
-		if e.DOM.ParentsUntil("td > h1").Find("h1").Text() == "Кино в Апатитах - Кинотеатр Полярный" {
-			fmt.Println(e.Text)
+		if strings.Contains(e.Attr(`src`), `images/news`) {
+			n.ImageURL = `hibiny` + e.Attr(`src`)
 		}
-
 	})
-	c.Visit(url)
+
+	c.OnError(func(r *colly.Response, err error) {
+		fmt.Printf("Error during http request: %s", err)
+	})
+
+	err := c.Visit(url)
+	if err != nil {
+		fmt.Printf("Error visiting %s: %s", url, err)
+	}
 	c.Wait()
+	return news
 }

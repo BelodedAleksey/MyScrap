@@ -11,26 +11,35 @@ import (
 	"github.com/gocolly/colly"
 )
 
-//Get func
-func Get() {
-	cityURL :=
-		`https://reg.polarmed.ru/schedule/`
-	cMain := colly.NewCollector()
-	cMain.OnHTML("*", func(e *colly.HTMLElement) {
-		if e.Name == "li" && e.Attr("data-id") != "" {
-			id := e.Attr("data-id")
-			fmt.Println("ID: ", id)        //id
-			fmt.Println("Город: ", e.Text) //Города
-		}
-	})
+//District struct
+type District struct {
+	Name string
+	ID   string
+}
 
-	cMain.OnRequest(func(r *colly.Request) {
-		fmt.Println("Visiting", r.URL.String())
-	})
+//Clinic struct
+type Clinic struct {
+	District District
+	ID       string
+	Name     string
+	Address  string
+}
 
-	cMain.Visit(cityURL)
-	cMain.Wait()
+//Specialist struct
+type Specialist struct {
+	Clinic Clinic
+	ID     string
+	Name   string
+}
 
+//Doctor struct
+type Doctor struct {
+	Specialist Specialist
+	ID         string
+	Name       string
+}
+
+func chromeSearch(url string, tasks chromedp.Tasks) {
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", false), //Визуальное отображение
 		chromedp.Flag("disable-gpu", false),
@@ -52,48 +61,132 @@ func Get() {
 	ctx, cancel = context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
-	url := `https://reg.polarmed.ru/schedule/`
-
-	// navigate to a page, wait for an element, click
-	var names, addresses, specials []string
-	var attrs []map[string]string
-	err := chromedp.Run(ctx,
+	actions := chromedp.Tasks{
 		chromedp.Navigate(url),
-		// wait for footer element is visible (ie, page is loaded)
 		chromedp.WaitVisible(`#footer`),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			log.Println("VISIBLE!!!")
 			return nil
 		}),
-		chromedp.Click(`li[data-id="10"]`, chromedp.NodeVisible),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			log.Println("Открыты клиники!!!")
-			return nil
-		}),
+		//chromedp.Click(`//li[text()="`+district+`"]`, chromedp.NodeVisible),}
+	}
+	actions = append(actions, tasks...)
+
+	err := chromedp.Run(ctx, actions)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+//GetDistricts func
+func GetDistricts() ([]District, error) {
+	var districts []District
+	districtURL :=
+		`https://reg.polarmed.ru/schedule/`
+	cMain := colly.NewCollector()
+	cMain.OnHTML(`li[data-id]`, func(e *colly.HTMLElement) {
+		if id := e.Attr("data-id"); id != "" {
+			districts = append(districts, District{ID: id, Name: e.Text})
+		}
+	})
+
+	cMain.OnError(func(r *colly.Response, err error) {
+		fmt.Printf("Error during http request: %s", err)
+	})
+
+	err := cMain.Visit(districtURL)
+	if err != nil {
+		fmt.Printf("Error visiting %s: %s", districtURL, err)
+		return nil, err
+	}
+	cMain.Wait()
+	return districts, nil
+}
+
+//GetClinics func
+func (d District) GetClinics() ([]Clinic, error) {
+	var clinics []Clinic
+
+	url := `https://reg.polarmed.ru/schedule/#%5B%7B%22district%22%3A` +
+		d.ID + `%7D%5D`
+
+	// navigate to a page, wait for an element, click
+	var names, addresses []string
+	var attrs []map[string]string
+
+	tasks := chromedp.Tasks{
 		chromedp.WaitVisible(`span.clinic_name`),
 		chromedp.AttributesAll(`#clinic_list > li`, &attrs, chromedp.ByQueryAll),
 		chromedp.Evaluate(jsGetText(`span.clinic_name`), &names),
 		chromedp.Evaluate(jsGetText(`span.clinic_address`), &addresses),
-
-		chromedp.Click(`li[data-id="51"]`, chromedp.NodeVisible),
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			log.Println("Открыты специалисты!!!")
-			return nil
-		}),
-		chromedp.WaitVisible(`#speciality_list`),
-		chromedp.AttributesAll(`#speciality_list > li`, &attrs, chromedp.ByQueryAll),
-		chromedp.Evaluate(jsGetText(`#speciality_list > li`), &specials),
-	)
-
-	if err != nil {
-		log.Fatal(err)
 	}
+
+	chromeSearch(url, tasks)
 
 	for i, n := range names {
-		log.Println("ID: ", attrs[i][`data-id`])
-		log.Println("Название: ", n)
-		log.Println("Адрес: ", addresses[i])
+		clinic := Clinic{}
+		clinic.District = d
+		clinic.ID = attrs[i][`data-id`]
+		clinic.Name = n
+		clinic.Address = addresses[i]
+		clinics = append(clinics, clinic)
 	}
+	return clinics, nil
+}
+
+//GetSpecialists func
+func (c Clinic) GetSpecialists() ([]Specialist, error) {
+	var specialists []Specialist
+
+	url := `https://reg.polarmed.ru/schedule/#%5B%7B%22district%22%3A` +
+		c.District.ID + `%7D%2C%7B%22clinic%22%3A` +
+		c.ID + `%7D%5D`
+
+	// navigate to a page, wait for an element, click
+	var names []string
+	var attrs []map[string]string
+
+	tasks := chromedp.Tasks{
+		chromedp.WaitVisible(`#speciality_list`),
+		chromedp.AttributesAll(`#speciality_list > li`, &attrs, chromedp.ByQueryAll),
+		chromedp.Evaluate(jsGetText(`#speciality_list > li`), &names),
+	}
+
+	chromeSearch(url, tasks)
+
+	for i, n := range names {
+		spec := Specialist{}
+		spec.Clinic = c
+		spec.Name = n
+		spec.ID = attrs[i]["data-id"]
+		specialists = append(specialists, spec)
+	}
+	return specialists, nil
+}
+
+//GetDoctors func
+func (s Specialist) GetDoctors() ([]Doctor, error) {
+	var doctors []Doctor
+	url := `https://reg.polarmed.ru/schedule/#%5B%7B%22district%22%3A` +
+		s.Clinic.District.ID + `%7D%2C%7B%22clinic%22%3A` +
+		s.Clinic.ID + `%7D%2C%7B%22speciality%22%3A` +
+		s.ID + `%7D%5D`
+	var names []string
+	var attrs []map[string]string
+	tasks := chromedp.Tasks{
+		chromedp.WaitVisible(``),
+		chromedp.AttributesAll(``, &attrs, chromedp.ByQueryAll),
+		chromedp.Evaluate(jsGetText(``), &names),
+	}
+	chromeSearch(url, tasks)
+	for i, n := range names {
+		doc := Doctor{}
+		doc.Specialist = s
+		doc.Name = n
+		doc.ID = attrs[i]["data-id"]
+		doctors = append(doctors, doc)
+	}
+	return doctors, nil
 }
 
 //Get All Text of Elements
